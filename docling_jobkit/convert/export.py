@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from docling.datamodel.base_models import OutputFormat
 from docling.datamodel.document import ConversionStatus
 from docling.datamodel.service.chunking import BaseChunkerOptions
-from docling_core.types.doc import DoclingDocument, ImageRefMode
+from docling_core.types.doc import DoclingDocument, FloatingItem, ImageRefMode
 
 from docling_jobkit.connectors.artifact_paths import ArtifactType
 from docling_jobkit.connectors.target_processor import BaseTargetProcessor
@@ -190,6 +190,22 @@ def _finish_chunk_streaming(
         raise first_exc
 
 
+def without_image_data(document: DoclingDocument) -> DoclingDocument:
+    """Return a copy of ``document`` without picture, table or page images.
+
+    ``ImageRefMode.PLACEHOLDER`` means no image data in the output. The Markdown
+    and HTML exports honor it by themselves; JSON serializes the images held by
+    the document, so they are removed from a copy first.
+    """
+    stripped = document.model_copy(deep=True)
+    for item, _level in stripped.iterate_items(with_groups=False):
+        if isinstance(item, FloatingItem):
+            item.image = None
+    for page in stripped.pages.values():
+        page.image = None
+    return stripped
+
+
 def write_chunks_jsonl(
     *,
     exportable_document: ExportableDocument,
@@ -265,7 +281,12 @@ def _materialize_document_exports(
     if export_json:
         fname = output_dir / f"{doc_filename}.json"
         _log.info(f"writing JSON output to {fname}")
-        exportable_document.document.save_as_json(
+        json_document = (
+            without_image_data(exportable_document.document)
+            if image_export_mode == ImageRefMode.PLACEHOLDER
+            else exportable_document.document
+        )
+        json_document.save_as_json(
             filename=fname,
             image_mode=image_export_mode,
             artifacts_dir=artifacts_dir,
