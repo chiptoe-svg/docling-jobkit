@@ -529,6 +529,33 @@ def _hash_pdf_format_option(pdf_format_option: PdfFormatOption) -> bytes:
     return options_hash
 
 
+# Request fields that set how a video's frames are sampled, and the
+# VideoPipelineOptions fields they map to.
+_VIDEO_FRAME_FIELDS = {
+    "video_frame_sampling_mode": "frame_sampling_mode",
+    "video_frame_interval_seconds": "frame_interval_seconds",
+    "video_cuts_per_minute": "cuts_per_minute",
+    "video_scene_change_prominence": "scene_change_prominence",
+    "video_max_sampled_frames": "max_sampled_frames",
+    "video_generate_frame_images": "generate_frame_images",
+}
+
+
+def _video_frame_options(request: ConvertDocumentsOptions) -> dict[str, Any]:
+    """The request's frame sampling settings that differ from the video pipeline's
+    defaults, as VideoPipelineOptions fields. A docling without the request fields
+    gives none."""
+    defaults = VideoPipelineOptions()
+    options = {}
+    for request_field, pipeline_field in _VIDEO_FRAME_FIELDS.items():
+        if not hasattr(request, request_field):
+            continue
+        value = getattr(request, request_field)
+        if value != getattr(defaults, pipeline_field):
+            options[pipeline_field] = value
+    return options
+
+
 def _to_list_of_strings(input_value: Union[str, list[str]]) -> list[str]:
     def split_and_strip(value: str) -> list[str]:
         if re.search(r"[;,]", value):
@@ -564,7 +591,7 @@ class DoclingConverterManager:
             allow_external_plugins=self.config.allow_external_plugins
         )
 
-        self._options_map: dict[bytes, PdfFormatOption] = {}
+        self._options_map: dict[bytes, tuple[PdfFormatOption, dict[str, Any]]] = {}
         self._get_converter_from_hash = self._create_converter_cache_from_hash(
             cache_size=self.config.options_cache_size
         )
@@ -582,7 +609,7 @@ class DoclingConverterManager:
     ) -> Callable[[bytes], DocumentConverter]:
         @lru_cache(maxsize=cache_size)
         def _get_converter_from_hash(options_hash: bytes) -> DocumentConverter:
-            pdf_format_option = self._options_map[options_hash]
+            pdf_format_option, video_frame_options = self._options_map[options_hash]
             image_format_option: FormatOption = pdf_format_option
             if isinstance(pdf_format_option.pipeline_cls, type) and issubclass(
                 pdf_format_option.pipeline_cls, VlmPipeline
@@ -651,7 +678,7 @@ class DoclingConverterManager:
                 picture_classification_options=picture_options.picture_classification_options,
                 do_picture_description=picture_options.do_picture_description,
                 picture_description_options=picture_options.picture_description_options,
-            )
+            ).model_copy(update=video_frame_options)
 
             # Without an explicit option, audio and video use docling's
             # default in-process ASR model, whatever the server is configured with.
@@ -1888,10 +1915,21 @@ class DoclingConverterManager:
             force_full_page_ocr=request.force_ocr,
         )
 
-    def get_converter(self, pdf_format_option: PdfFormatOption) -> DocumentConverter:
+    def get_converter(
+        self,
+        pdf_format_option: PdfFormatOption,
+        video_frame_options: Optional[dict[str, Any]] = None,
+    ) -> DocumentConverter:
+        video_frame_options = video_frame_options or {}
         with self._cache_lock:
             options_hash = _hash_pdf_format_option(pdf_format_option)
-            self._options_map[options_hash] = pdf_format_option
+            if video_frame_options:
+                options_hash = hashlib.sha1(
+                    options_hash
+                    + json.dumps(video_frame_options, sort_keys=True).encode(),
+                    usedforsecurity=False,
+                ).digest()
+            self._options_map[options_hash] = (pdf_format_option, video_frame_options)
             converter = self._get_converter_from_hash(options_hash)
         return converter
 
@@ -2201,7 +2239,9 @@ class DoclingConverterManager:
         try:
             self.parse_chunking_options(options)
             pdf_format_option = self.get_pdf_pipeline_opts(options)
-            converter = self.get_converter(pdf_format_option)
+            converter = self.get_converter(
+                pdf_format_option, _video_frame_options(options)
+            )
             with self._cache_lock:
                 converter.initialize_pipeline(format=InputFormat.PDF)
         except Exception as exc:

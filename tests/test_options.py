@@ -37,6 +37,7 @@ from docling_jobkit.convert.manager import (
     DoclingConverterManagerConfig,
     _hash_pdf_format_option,
     _to_list_of_strings,
+    _video_frame_options,
 )
 from docling_jobkit.datamodel.convert import (
     ConvertDocumentsOptions,
@@ -598,3 +599,38 @@ def test_picture_description_options_reach_video(asr_configured):
         == pipeline_opts.pipeline_options.picture_description_options
     )
     assert isinstance(video_options.asr_options, ApiAsrOptions) == asr_configured
+
+
+def test_frame_sampling_options_reach_video():
+    """A request's frame sampling settings must reach the video pipeline."""
+    m = DoclingConverterManager(config=DoclingConverterManagerConfig())
+    opts = ConvertDocumentsOptions(
+        video_frame_sampling_mode="scene_change",
+        video_cuts_per_minute=2.0,
+        video_max_sampled_frames=50,
+    )
+    pipeline_opts = m.get_pdf_pipeline_opts(opts)
+    converter = m.get_converter(pipeline_opts, _video_frame_options(opts))
+
+    video_options = converter.format_to_options[InputFormat.VIDEO].pipeline_options
+    assert video_options.frame_sampling_mode == "scene_change"
+    assert video_options.cuts_per_minute == 2.0
+    assert video_options.max_sampled_frames == 50
+    assert video_options.frame_interval_seconds == 10.0
+
+
+def test_frame_sampling_options_key_the_converter_cache():
+    """Requests that differ only in frame sampling must not share a converter,
+    and a request with the default sampling shares the plain one."""
+    m = DoclingConverterManager(config=DoclingConverterManagerConfig())
+    default_opts = ConvertDocumentsOptions()
+    scene_opts = ConvertDocumentsOptions(video_frame_sampling_mode="scene_change")
+    pipeline_opts = m.get_pdf_pipeline_opts(default_opts)
+
+    plain = m.get_converter(pipeline_opts)
+    default = m.get_converter(pipeline_opts, _video_frame_options(default_opts))
+    scene = m.get_converter(pipeline_opts, _video_frame_options(scene_opts))
+
+    assert _video_frame_options(default_opts) == {}
+    assert default is plain
+    assert scene is not plain
