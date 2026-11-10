@@ -565,3 +565,36 @@ def test_asr_options_require_remote_services():
         DoclingConverterManagerConfig(
             asr_options={"url": "http://localhost:8000/v1/audio/transcriptions"}
         )
+
+
+@pytest.mark.parametrize("asr_configured", [False, True])
+def test_picture_description_options_reach_video(asr_configured):
+    """A request's picture description must describe the frames of a video, as it
+    does the pictures of the other formats."""
+    config = (
+        DoclingConverterManagerConfig(
+            enable_remote_services=True,
+            asr_options={"url": "http://localhost:8000/v1/audio/transcriptions"},
+        )
+        if asr_configured
+        else DoclingConverterManagerConfig()
+    )
+    m = DoclingConverterManager(config=config)
+    opts = ConvertDocumentsOptions(
+        do_picture_description=True,
+        picture_description_api={
+            "url": "http://localhost:8000/v1/chat/completions",
+            "params": {"model": "test-model"},
+        },
+    )
+    with pytest.warns(DeprecationWarning):
+        pipeline_opts = m.get_pdf_pipeline_opts(opts)
+    converter = m.get_converter(pipeline_opts)
+
+    video_options = converter.format_to_options[InputFormat.VIDEO].pipeline_options
+    assert video_options.do_picture_description
+    assert (
+        video_options.picture_description_options
+        == pipeline_opts.pipeline_options.picture_description_options
+    )
+    assert isinstance(video_options.asr_options, ApiAsrOptions) == asr_configured

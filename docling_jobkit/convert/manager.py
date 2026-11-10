@@ -28,6 +28,7 @@ from docling.datamodel.picture_classification_options import (
 from docling.datamodel.pipeline_options import (
     AsrPipelineOptions,
     CodeFormulaVlmOptions,
+    ConvertPipelineOptions,
     OcrOptions,
     PdfBackend,
     PdfPipelineOptions,
@@ -636,6 +637,22 @@ class DoclingConverterManager:
                 ),
             )
 
+            # Video frames are pictures: they take the request's picture
+            # classification and description, as the office formats do.
+            picture_options = (
+                office_pipeline_options
+                if isinstance(office_pipeline_options, ConvertPipelineOptions)
+                else ConvertPipelineOptions()
+            )
+            video_pipeline_options = VideoPipelineOptions(
+                artifacts_path=self.config.artifacts_path,
+                enable_remote_services=self.config.enable_remote_services,
+                do_picture_classification=picture_options.do_picture_classification,
+                picture_classification_options=picture_options.picture_classification_options,
+                do_picture_description=picture_options.do_picture_description,
+                picture_description_options=picture_options.picture_description_options,
+            )
+
             # Without an explicit option, audio and video use docling's
             # default in-process ASR model, whatever the server is configured with.
             if self.config.asr_options is not None:
@@ -646,13 +663,10 @@ class DoclingConverterManager:
                         asr_options=self.config.asr_options,
                     )
                 )
-                format_options[InputFormat.VIDEO] = VideoFormatOption(
-                    pipeline_options=VideoPipelineOptions(
-                        artifacts_path=self.config.artifacts_path,
-                        enable_remote_services=self.config.enable_remote_services,
-                        asr_options=self.config.asr_options,
-                    )
-                )
+                video_pipeline_options.asr_options = self.config.asr_options
+            format_options[InputFormat.VIDEO] = VideoFormatOption(
+                pipeline_options=video_pipeline_options
+            )
 
             return DocumentConverter(format_options=format_options)
 
