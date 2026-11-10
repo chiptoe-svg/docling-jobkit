@@ -37,6 +37,7 @@ from docling_jobkit.convert.export import (
     _release_exportable_document_references,
     _upload_materialized_artifacts,
     stream_chunks_for_document,
+    without_image_data,
     write_chunks_jsonl,
 )
 from docling_jobkit.datamodel.exportable_document import (
@@ -238,7 +239,11 @@ def _export_document_as_content(
 
         # Create the different formats
         if export_json:
-            document.json_content = new_doc
+            document.json_content = (
+                without_image_data(new_doc)
+                if image_mode == ImageRefMode.PLACEHOLDER
+                else new_doc
+            )
         if export_html:
             document.html_content = new_doc.export_to_html(image_mode=image_mode)
         if export_txt:
